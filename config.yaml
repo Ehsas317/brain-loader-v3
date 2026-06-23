@@ -1,0 +1,121 @@
+# Brain Loader v3 — Configuration
+# ─────────────────────────────────────────────────────────────────
+# STEP 1: Set your backend
+# ─────────────────────────────────────────────────────────────────
+backend: "mlx"           # CHANGE: "mlx" (Apple Silicon) or "ollama" (any system)
+
+project:
+  name: "brain_loader_v3"
+  outputs_dir: "./outputs"
+  memory_file: "./memory.md"
+  state_file: "./state.json"
+  max_tasks: 100
+
+# ─────────────────────────────────────────────────────────────────
+# Telegram (optional — leave both empty strings to disable)
+# Get token: message @BotFather on Telegram
+# Get chat_id: message @userinfobot on Telegram
+# ─────────────────────────────────────────────────────────────────
+telegram:
+  token: ""              # CHANGE: "1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ"
+  chat_id: ""            # CHANGE: "123456789"
+
+# ─────────────────────────────────────────────────────────────────
+# MLX MODELS — Apple Silicon only
+# model_path: HuggingFace repo ID
+# Download first: huggingface-cli download <model_path>
+# ─────────────────────────────────────────────────────────────────
+brain_mlx:
+  model_path: "mlx-community/Qwen3-32B-4bit"       # CHANGE to your brain model
+  max_tokens_first_load: 16384
+  max_tokens_subsequent: 12288
+  max_tokens_final: 16384
+  temperature: 0.6
+  ram_estimate_gb: 24.0
+
+specialists_mlx:
+  coder:
+    model_path: "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit"
+    max_tokens: 16384
+    temperature: 0.2
+    ram_estimate_gb: 24.0
+    description: "Code generation, debugging, implementation"
+
+  researcher:
+    model_path: "mlx-community/Qwen3-32B-4bit"
+    max_tokens: 12288
+    temperature: 0.4
+    ram_estimate_gb: 24.0
+    description: "Research, analysis, data gathering"
+
+  writer:
+    model_path: "mlx-community/Qwen3-32B-4bit"
+    max_tokens: 16384
+    temperature: 0.7
+    ram_estimate_gb: 24.0
+    description: "Documentation, long-form writing, synthesis"
+
+  critic:
+    model_path: "mlx-community/Qwen3-32B-4bit"
+    max_tokens: 8192
+    temperature: 0.3
+    ram_estimate_gb: 24.0
+    description: "Review, critique, quality assurance"
+
+  math:
+    model_path: "mlx-community/Qwen2.5-Math-72B-Instruct-4bit"
+    max_tokens: 8192
+    temperature: 0.2
+    ram_estimate_gb: 24.0
+    description: "Mathematical reasoning, algorithms (72B)"
+
+# ─────────────────────────────────────────────────────────────────
+# OLLAMA MODELS — Any system with Ollama installed
+# model_path: model name from `ollama list`
+# Pull first: ollama pull <model_name>
+# Ollama must be running: ollama serve
+# ─────────────────────────────────────────────────────────────────
+ollama_host: "http://localhost:11434"    # CHANGE if Ollama is on a different machine
+
+brain_ollama:
+  model_path: "qwen3:32b"               # CHANGE to your brain model
+  max_tokens_first_load: 8192
+  max_tokens_subsequent: 6144
+  max_tokens_final: 8192
+  temperature: 0.6
+
+specialists_ollama:
+  coder:
+    model_path: "qwen2.5-coder:32b"     # CHANGE
+    max_tokens: 8192
+    temperature: 0.2
+    description: "Code generation, debugging"
+
+  researcher:
+    model_path: "qwen3:32b"
+    max_tokens: 6144
+    temperature: 0.4
+    description: "Research, analysis"
+
+  writer:
+    model_path: "qwen3:32b"
+    max_tokens: 8192
+    temperature: 0.7
+    description: "Documentation, writing"
+
+  critic:
+    model_path: "qwen3:32b"
+    max_tokens: 4096
+    temperature: 0.3
+    description: "Review, critique"
+
+  math:
+    model_path: "qwen2.5:72b"           # CHANGE — needs enough RAM
+    max_tokens: 4096
+    temperature: 0.2
+    description: "Math, algorithms"
+
+# Memory cleanup settings
+memory:
+  gc_sleep_seconds: 2        # Seconds to wait after model unload for memory to settle
+  aggressive_cleanup: true   # MLX only: call mx.metal.clear_cache() after offload
