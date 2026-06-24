@@ -11,6 +11,8 @@ The orchestrator only sequences calls.
 """
 
 import logging
+import signal
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -20,6 +22,19 @@ from core.model_manager import ModelConfig, create_model_manager, BaseModelManag
 from core.coordinator import Coordinator
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_tg_markdown(text: str) -> str:
+    """
+    Escape Telegram Markdown special characters in user-provided text.
+    Prevents Broken notifications when goal/task names contain _, *, or `.
+    """
+    if not text:
+        return text
+    # Escape characters that Telegram Markdown v1 treats as formatting
+    for char in ["_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]:
+        text = text.replace(char, f"\\{char}")
+    return text
 
 
 class BrainOrchestrator:
@@ -72,16 +87,35 @@ class BrainOrchestrator:
 
         self._telegram = None
 
+        # Register graceful shutdown handler (Ctrl+C / SIGTERM)
+        self._shutdown_requested = False
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
         logger.info("[Orchestrator] v3 ready. Backend: %s", self.backend)
         logger.info("[Orchestrator] Brain: %s", self.brain_config.path)
         logger.info("[Orchestrator] Specialists: %s", list(self.specialist_configs.keys()))
+
+    def _signal_handler(self, signum, frame) -> None:
+        """Handle Ctrl+C / SIGTERM by unloading model and exiting cleanly."""
+        sig_name = signal.Signals(signum).name
+        logger.warning("[Orchestrator] Received %s — initiating graceful shutdown...", sig_name)
+        self._shutdown_requested = True
+        try:
+            self.model_mgr.shutdown()
+            logger.info("[Orchestrator] Model unloaded successfully.")
+        except Exception as e:
+            logger.warning("[Orchestrator] Shutdown cleanup error: %s", e)
+        self._notify(f"⚠️ Brain Loader v3 stopped ({sig_name}). Model unloaded.")
+        sys.exit(128 + signum)
 
     # ════════════════════════════════════════════════════════════════
     # Public API
     # ════════════════════════════════════════════════════════════════
 
     def run(self, goal: str, constraints: str = "", resume: bool = False) -> None:
-        self._notify(f"🧠 Brain Loader v3 Started\nBackend: {self.backend}\nGoal: _{goal}_")
+        safe_goal = _escape_tg_markdown(goal)
+        self._notify(f"🧠 Brain Loader v3 Started\nBackend: {self.backend}\nGoal: _{safe_goal}_")
 
         if resume:
             state = self.coord.load_state()
@@ -112,13 +146,14 @@ class BrainOrchestrator:
         self._notify(f"📋 Master plan: *{len(task_names)}* tasks created.")
 
         # Coordinator initializes state and memory (pure Python, no LLM)
+        # FIX: Store constraints in state.json for resume support
         state = self.coord.init_state(
             self.config["project"]["name"],
             goal,
             task_names,
+            constraints=constraints,
         )
 
-        # FIX: parameter name was 'first_task_specialist' in original — correct name is 'first_specialist'
         self.coord.init_memory(
             goal=goal,
             constraints=constraints,
@@ -132,8 +167,11 @@ class BrainOrchestrator:
         self._execute_task_loop(state)
 
     def _execute_task_loop(self, state: Dict) -> None:
-        """Main loop. Runs until all tasks complete."""
+        """Main loop. Runs until all tasks complete or shutdown is requested."""
         while True:
+            if self._shutdown_requested:
+                logger.info("[Orchestrator] Shutdown requested — exiting task loop.")
+                break
             next_task = self.coord.get_next_pending_task(state)
             if not next_task:
                 self._do_final_synthesis(state)
@@ -166,9 +204,10 @@ class BrainOrchestrator:
         logger.info("=" * 60)
 
         self.coord.mark_task_active(state, task_id, specialist_key)
+        safe_task_name = _escape_tg_markdown(task_name)
         self._notify(
             f"⚙️ *Task {task_id}/{state['total_tasks']}*\n"
-            f"{task_name}\n"
+            f"{safe_task_name}\n"
             f"Specialist: `{specialist_key}`"
         )
 
@@ -236,7 +275,8 @@ class BrainOrchestrator:
             raise RuntimeError("Memory integrity check failed. Inspect memory.md and state.json before retrying.")
 
         self.model_mgr.offload()
-        self._notify(f"✅ Task {task_id} done. {summary[:100]}")
+        safe_summary = _escape_tg_markdown(summary[:100])
+        self._notify(f"✅ Task {task_id} done. {safe_summary}")
 
     def _do_final_synthesis(self, state: Dict) -> None:
         """Final brain load: synthesize all outputs into FINAL_ANSWER.md."""
@@ -261,12 +301,14 @@ class BrainOrchestrator:
         final_file = self.coord.write_final_answer(final_answer)
         self.model_mgr.shutdown()
 
+        safe_goal = _escape_tg_markdown(state["goal"])
+        safe_outdir = _escape_tg_markdown(str(self.coord.outputs_dir.absolute()))
         self._notify(
             f"🎉 *PROJECT COMPLETE!*\n\n"
-            f"Goal: _{state['goal']}_\n"
+            f"Goal: _{safe_goal}_\n"
             f"Tasks completed: {state['total_tasks']}\n\n"
             f"📂 Outputs:\n"
-            f"`{self.coord.outputs_dir.absolute()}`\n\n"
+            f"`{safe_outdir}`\n\n"
             f"• `memory.md` — Full project history\n"
             f"• `state.json` — Execution log\n"
             f"• `task_NNN_*.md` — Individual task outputs\n"
@@ -297,6 +339,10 @@ class BrainOrchestrator:
         """Resume from state.json + memory.md checkpoint."""
         if not self.coord.verify_memory_integrity():
             raise RuntimeError("Cannot resume — memory.md is corrupt or missing.")
+        # Restore constraints from state if available (Bug fix: constraints were previously lost)
+        constraints = state.get("constraints", "")
+        if constraints:
+            logger.info("[Orchestrator] Restored constraints: %s", constraints)
         self._execute_task_loop(state)
 
     # ════════════════════════════════════════════════════════════════
