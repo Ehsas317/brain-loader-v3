@@ -190,16 +190,18 @@ class MLXModelManager(BaseModelManager):
         self.config = None
         self._currently_loaded = None
         gc.collect()
-        # FIX: mx.synchronize() wrapped in try/except to ensure clear_cache always runs
-        try:
-            mx.synchronize()
-        except Exception:
-            pass
-        try:
-            if hasattr(mx.metal, "clear_cache"):
-                mx.metal.clear_cache()
-        except Exception:
-            pass
+        # FIX BUG-V3-003: Guard mx.synchronize() and mx.metal against NameError
+        # in case MLX failed to import (mx doesn't exist).
+        if MLX_AVAILABLE:
+            try:
+                mx.synchronize()
+            except Exception:
+                pass
+            try:
+                if hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+            except Exception:
+                pass
         time.sleep(5)
 
 
